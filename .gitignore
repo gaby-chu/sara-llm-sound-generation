@@ -6,3 +6,4 @@ raw/
 *.mp3
 node_modules/
 runs/
+.env

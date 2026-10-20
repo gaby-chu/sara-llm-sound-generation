@@ -25,6 +25,15 @@ ZIPA and wav2vec2 models download to `~/.cache/huggingface` on first use; after 
 3. `python score_local.py runs/final_*`: ZIPA and wav2vec2 transcriptions, `scores_local.json` per folder.
 4. `python build_metadata.py`: `runs/final_metadata.csv`, `runs/final_generation.csv`, `runs/scorer_comparison.md`.
 
+### OpenAI variant
+
+`bash run_openai.sh VOICE text ref` (optional `MODEL=... PROMPTS=... ONLY="..."`) does step 1 with `gen_openai.py`
+instead: OpenAI's `gpt-audio-1.5` on Chat Completions, with the same opening, prompts, reference recordings and take
+naming as `gen_gemini.py`. Output goes to `runs/openai_<VOICE>_<MODE>/`. Needs `OPENAI_API_KEY`. Triage still uses
+the Gemini listener (gcloud credentials), so the takes are judged the same way as the Gemini ones. OpenAI voices
+are lowercase (`alloy`, `coral`, `sage`, `marin`, ...). `score_local.py runs/openai_*` scores them locally;
+`combine_final.py` and `build_metadata.py` only know the Gemini runs.
+
 ## Inputs and results
 
 - `gen_prompts_v3.csv` (v3/v4 runs), `gen_prompts_v4.csv` (v5 runs, the default), `labels_v2.csv`: prompts and labels.
