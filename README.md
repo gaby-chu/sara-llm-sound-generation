@@ -28,7 +28,8 @@ Every clip is made from a reference recording (`sound_inputs/<sound>.wav`) plus 
    `runs/openai_gpt-realtime-2.1_<VOICE>_ref/`. Needs `OPENAI_API_KEY` (in `.env`); triage still uses the Gemini
    listener, so the takes are judged the same way. Done for all 10 voices the model accepts: alloy, ash, ballad,
    cedar, coral, echo, marin, sage, shimmer, verse. Takes with a raw peak under 0.05 are kept in `raw/` but not
-   prepped; coral f and θ and sage θ have no usable take.
+   prepped. Quiet f/θ often fall under that, so coral f and sage θ (no take above it in 8 retries) use a take
+   prepped by hand: take 2, a real fricative 24–31 dB above the noise floor.
 3. `python score_local.py runs/final_*_ref runs/openai_*_ref`: ZIPA and wav2vec2 transcriptions, `scores_local.json`
    per folder.
 4. `python build_metadata.py`: `runs/final_metadata.csv`, `runs/final_generation.csv`, `runs/scorer_comparison.md`
