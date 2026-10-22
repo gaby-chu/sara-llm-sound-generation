@@ -17,26 +17,31 @@ ZIPA and wav2vec2 models download to `~/.cache/huggingface` on first use; after 
 
 ## Pipeline
 
-1. `bash run_v4.sh VOICE text ref` (optional `RUN=v5 PROMPTS=gen_prompts_v4.csv ONLY="n_correct_01.wav ..."`):
-   `gen_gemini.py` makes 3 takes per prompt (using `tools.py` for the clip prep), then `triage_takes.py` asks
-   `gemini-2.5-flash` what it hears, then `takes_csv.py` writes `runs/<RUN>_<VOICE>_<MODE>/takes.csv`.
-2. `python combine_final.py Fenrir Kore Leda Puck Zephyr`: builds `runs/final_<VOICE>_<MODE>/` from the latest v4 run
-   (v3 where there is none) plus the v5 takes of the rewritten sounds.
-3. `python score_local.py runs/final_*`: ZIPA and wav2vec2 transcriptions, `scores_local.json` per folder.
-4. `python build_metadata.py`: `runs/final_metadata.csv`, `runs/final_generation.csv`, `runs/scorer_comparison.md`.
+Every clip is made from a reference recording (`sound_inputs/<sound>.wav`) plus that sound's prompt in
+`gen_prompts_v4.csv` ("ref" mode), for the 23 correct sounds.
 
-### OpenAI variant
+1. `bash run_gemini.sh VOICE` (optional `PROMPTS=... ONLY="n_correct_01.wav ..."`): `gen_gemini.py` makes 3 takes
+   per prompt with `gemini-3.8-live` (using `tools.py` for the clip prep), then `triage_takes.py` asks
+   `gemini-2.5-flash` what it hears, then `takes_csv.py` writes `runs/final_<VOICE>_ref/takes.csv`.
+   Done for all 8 voices: Aoede, Charon, Fenrir, Kore, Leda, Orus, Puck, Zephyr.
+2. `bash run_openai.sh VOICE`: the same with `gen_openai.py` and OpenAI's `gpt-realtime-2.1` (Realtime API), into
+   `runs/openai_gpt-realtime-2.1_<VOICE>_ref/`. Needs `OPENAI_API_KEY` (in `.env`); triage still uses the Gemini
+   listener, so the takes are judged the same way. Done for all 10 voices the model accepts: alloy, ash, ballad,
+   cedar, coral, echo, marin, sage, shimmer, verse. Takes with a raw peak under 0.05 are kept in `raw/` but not
+   prepped; coral f and θ and sage θ have no usable take.
+3. `python score_local.py runs/final_*_ref runs/openai_*_ref`: ZIPA and wav2vec2 transcriptions, `scores_local.json`
+   per folder.
+4. `python build_metadata.py`: `runs/final_metadata.csv`, `runs/final_generation.csv`, `runs/scorer_comparison.md`
+   (Gemini only). `python build_scores.py`: copies every clip into `runs/gemini-3.8-live/` and
+   `runs/gpt-realtime-2.1/` as `<VOICE>_ref_<clip>.wav`, with per-model score tables and `runs/combined_scores.csv`.
 
-`bash run_openai.sh VOICE text ref` (optional `MODEL=... PROMPTS=... ONLY="..."`) does step 1 with `gen_openai.py`
-instead: OpenAI's `gpt-audio-1.5` on Chat Completions, with the same opening, prompts, reference recordings and take
-naming as `gen_gemini.py`. Output goes to `runs/openai_<VOICE>_<MODE>/`. Needs `OPENAI_API_KEY`. Triage still uses
-the Gemini listener (gcloud credentials), so the takes are judged the same way as the Gemini ones. OpenAI voices
-are lowercase (`alloy`, `coral`, `sage`, `marin`, ...). `score_local.py runs/openai_*` scores them locally;
-`combine_final.py` and `build_metadata.py` only know the Gemini runs.
+Both generators still accept `text` and `mimic` modes (`bash run_gemini.sh VOICE text`), which aren't used now.
 
 ## Inputs and results
 
-- `gen_prompts_v3.csv` (v3/v4 runs), `gen_prompts_v4.csv` (v5 runs, the default), `labels_v2.csv`: prompts and labels.
-- `sound_inputs/`: the 23 reference recordings sent with "ref" prompts.
-- `scorer_report.md`: Gemini listener vs ZIPA vs wav2vec2.
+- `gen_prompts_v4.csv`, `labels_v2.csv`: prompts and labels for the 23 correct sounds.
+- `sound_inputs/`: the 23 reference recordings sent with each prompt.
+- `scorer_report.md`: Gemini listener vs ZIPA vs wav2vec2 (written for the earlier text + ref runs).
 - `runs/`: all audio and run data. Like every `.wav`, it is gitignored, so it lives only on disk.
+- `runs_archive/`: earlier runs that aren't part of the set (text-prompt runs, the v3/v4/v5 runs the first five
+  Gemini sets were combined from, `gpt-audio-1.5` runs, R distortion takes, old score tables). Also gitignored.

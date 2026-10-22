@@ -1,12 +1,12 @@
 #!/bin/bash
-# One OpenAI voice: [MODEL=gpt-audio-1.5] [PROMPTS=gen_prompts_v4.csv] bash run_openai.sh VOICE MODE [MODE ...]   MODE = text | ref | mimic
+# One OpenAI voice: [MODEL=gpt-realtime-2.1] [PROMPTS=gen_prompts_v4.csv] bash run_openai.sh VOICE [MODE ...]   MODE = ref (default) | text | mimic
 # Optional ONLY="n_correct_01.wav l_correct_01.wav" limits the prompts. Needs OPENAI_API_KEY (generation) and
 # gcloud credentials (triage still uses the Gemini listener, so results compare with the Gemini runs).
 # Each mode: 3 takes -> runs/openai_<MODEL>_<VOICE>_<MODE>/, then triage and takes.csv.
 cd "$(dirname "$0")"
-MODEL=${MODEL:-gpt-audio-1.5}; PROMPTS=${PROMPTS:-gen_prompts_v4.csv}
+MODEL=${MODEL:-gpt-realtime-2.1}; PROMPTS=${PROMPTS:-gen_prompts_v4.csv}
 RT=(); [[ $MODEL == gpt-realtime* ]] && RT=(--realtime)
-V=$1; shift
+V=$1; shift; [ $# -eq 0 ] && set -- ref
 for mode in "$@"; do
   OUT=runs/openai_${MODEL}_${V}_${mode}
   REF=(); [ $mode != text ] && REF=(--ref-dir sound_inputs --ref-mode $mode)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Metadata for the final sets (runs/final_*), plus a generation log and a scorer comparison.
+"""Metadata for the Gemini sets (runs/final_<VOICE>_ref), plus a generation log and a scorer comparison.
 
-  python build_metadata.py        # after combine_final.py, triage (in takes.csv) and score_local.py
+  python build_metadata.py        # after run_gemini.sh (generation + triage in takes.csv) and score_local.py
 
 Writes, in runs/:
 - final_metadata.csv: one row per clip. target_sound, produced_IPA (the intended IPA), error_type
-  (correct / sub:<IPA> / distortion), method, voice, source_clip (the input recording sent to the model,
-  sound_inputs/<sound>.wav; blank for text-prompt clips, which had no audio input), scorer results, human_review (blank).
+  (correct), method, voice, source_clip (the input recording sent to the model, sound_inputs/<sound>.wav),
+  scorer results, human_review (blank).
   Scorer results: <scorer>_ipa is what it heard, <scorer>_match is True when that equals produced_IPA. Gemini's
   match also needs no vowel after and no letter name or word. ZIPA and wav2vec2 output phone sequences, so they
   match only when the whole sequence is the target (an added vowel counts as no match).
@@ -21,8 +21,6 @@ from pathlib import Path
 repo = Path(__file__).parent
 runs = repo / "runs"
 labels = {Path(r["file"]).stem: r for r in csv.DictReader(open(repo / "labels_v2.csv", encoding="utf-8"))}
-# v4/v3 runs used gen_prompts_v3.csv; v5 runs (the rewritten sounds, see combine_final.V5) used gen_prompts_v4.csv
-PROMPT_FILE = {"v5": "gen_prompts_v4.csv"}
 
 EQ = {"r": "ɹ", "ɚ": "ɹ", "ɝ": "ɹ", "y": "j", "ʧ": "tʃ", "ʤ": "dʒ"}
 
@@ -47,7 +45,7 @@ def truthy(v) -> bool:
 
 
 meta, gen = [], []
-for d in sorted(runs.glob("final_*_*")):
+for d in sorted(runs.glob("final_*_ref")):
     _, voice, mode = d.name.split("_")
     local = json.load(open(d / "scores_local.json", encoding="utf-8")) if (d / "scores_local.json").exists() else {}
     for r in csv.DictReader(open(d / "takes.csv", encoding="utf-8")):
@@ -59,11 +57,11 @@ for d in sorted(runs.glob("final_*_*")):
         raw = d / "raw" / f"{stem}.wav"
         gen.append({
             "file": file, "prompt_id": r["prompt_id"], "take": r["take"], "model": r["model"], "voice": voice,
-            "mode": mode, "prompt_file": PROMPT_FILE.get(r["source_run"].split("_")[0], "gen_prompts_v3.csv"),
+            "mode": mode, "prompt_file": "gen_prompts_v4.csv",
             "system_instruction": r["system_instruction"], "reference_audio": r["reference_audio"],
             "user_prompt": r["user_prompt"], "raw_file": f"runs/{d.name}/raw/{raw.name}" if raw.exists() else "",
             "raw_seconds": r["raw_seconds"], "cropped_to_1.8s": r["cropped_to_1.8s"],
-            "model_transcript": r["model_transcript"], "status": r["status"], "source_run": r["source_run"],
+            "model_transcript": r["model_transcript"], "status": r["status"], "source_run": r.get("source_run", d.name),
         })
         if not file:
             continue
@@ -72,7 +70,7 @@ for d in sorted(runs.glob("final_*_*")):
         z_ipa, w_ipa = z.get("zipa", "").replace("▁", "").strip(), z.get("w2v2", "")
         meta.append({
             "file": file, "target_sound": lab.get("target_sound", r["target_sound"]), "produced_IPA": want,
-            "error_type": error_type(lab), "method": f"{r['model']} {'text prompt' if mode == 'text' else 'text prompt + reference recording'}",
+            "error_type": error_type(lab), "method": f"{r['model']} text prompt + reference recording",
             "voice": voice, "source_clip": r["reference_audio"],
             "gemini_ipa": g_ipa, "gemini_vowel_after": r["listener_vowel_after"],
             "gemini_letter_or_word": r["listener_letter_or_word"],
@@ -107,8 +105,7 @@ def kappa(a, b) -> float:
 scored = [m for m in meta if m["zipa_ipa"] or m["w2v2_ipa"] or m["file"]]
 correct = [m for m in scored if m["error_type"] == "correct"]
 lines = ["# Scorer comparison: Gemini listener vs ZIPA vs wav2vec2", "",
-         f"{len(scored)} generated clips in runs/final_* ({len(correct)} intended-correct, "
-         f"{len(scored) - len(correct)} R distortions). No human labels yet, so these are agreement numbers, not accuracy.",
+         f"{len(scored)} generated clips in runs/final_*_ref, all intended-correct sounds. No human labels yet, so these are agreement numbers, not accuracy.",
          "", "Match = the scorer heard exactly the intended IPA (Gemini: also no vowel after, no letter name/word). "
          "Contains = the intended sound appears somewhere in what the local model heard (it may have added a vowel).", ""]
 
@@ -143,7 +140,7 @@ for i in range(3):
                      f"{sum(x and y for x, y in zip(a, b))} | {sum(x and not y for x, y in zip(a, b))} | "
                      f"{sum(y and not x for x, y in zip(a, b))} |")
 
-lines += ["", "## Per sound: clips matched (of all voices and modes) and what each scorer heard most", "",
+lines += ["", "## Per sound: clips matched (of all voices) and what each scorer heard most", "",
           "| Sound | IPA | n | Gemini | ZIPA | wav2vec2 | Gemini heard | ZIPA heard | wav2vec2 heard |",
           "|---|---|---|---|---|---|---|---|---|"]
 by = defaultdict(list)
@@ -155,12 +152,10 @@ for s, rs in sorted(by.items()):
                  + " | ".join(str(sum(r[f'{k}_match'] for r in rs)) for k, _ in S)
                  + f" | {top('gemini')} | {top('zipa')} | {top('w2v2')} |")
 
-lines += ["", "## By method (intended-correct sounds, Gemini / ZIPA / wav2vec2 matches)", "",
-          "| Voice | text prompt | prompt + reference |", "|---|---|---|"]
+lines += ["", "## By voice (Gemini / ZIPA / wav2vec2 matches)", "", "| Voice | Clips | Matches |", "|---|---|---|"]
 for v in sorted({r["voice"] for r in correct}):
-    cell = lambda meth: " / ".join(str(sum(r[f"{k}_match"] for r in correct if r["voice"] == v and r["method"].endswith(meth)))
-                                   for k, _ in S)
-    lines.append(f"| {v} | {cell('text prompt')} | {cell('reference recording')} |")
+    rs = [r for r in correct if r["voice"] == v]
+    lines.append(f"| {v} | {len(rs)} | {' / '.join(str(sum(r[f'{k}_match'] for r in rs)) for k, _ in S)} |")
 
 open(runs / "scorer_comparison.md", "w", encoding="utf-8").write("\n".join(lines) + "\n")
 print("runs/scorer_comparison.md")

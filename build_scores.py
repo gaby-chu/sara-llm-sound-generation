@@ -4,11 +4,11 @@ gathered in its own folder.
 
   python build_scores.py        # after triage (takes.csv) and score_local.py on every source run
 
-Sources: runs/final_<VOICE>_<MODE>/ (Gemini, from combine_final.py) and runs/openai_gpt-realtime-2.1_<VOICE>_<MODE>/.
+Sources: runs/final_<VOICE>_ref/ (Gemini, from run_gemini.sh) and runs/openai_gpt-realtime-2.1_<VOICE>_ref/ (run_openai.sh).
 Copies every clip to runs/<model>/<VOICE>_<MODE>_<clip>.wav (the source runs are untouched) and writes
 runs/<model>/<model>_scores.csv per model and runs/combined_scores.csv with both.
 
-Columns as in runs/scorer_report_clips.csv (see scorer_report.md for the rules), plus model and source_clip:
+Columns as in runs_archive/scorer_report_clips.csv (see scorer_report.md for the rules), plus model and source_clip:
 - gemini / zipa / w2v2: what each scorer heard (Gemini 2.5 Flash listener from takes.csv, ZIPA and wav2vec2 from
   scores_local.json).
 - <scorer>_strict: the whole output is the intended IPA (Gemini: also no vowel after, no letter name or word).
@@ -22,8 +22,8 @@ repo = Path(__file__).parent
 runs = repo / "runs"
 labels = {Path(r["file"]).stem: r for r in csv.DictReader(open(repo / "labels_v2.csv", encoding="utf-8"))}
 SOURCES = {
-    "gemini-3.8-live": sorted(runs.glob("final_*_*")),
-    "gpt-realtime-2.1": sorted(runs.glob("openai_gpt-realtime-2.1_*_*")),
+    "gemini-3.8-live": sorted(runs.glob("final_*_ref")),
+    "gpt-realtime-2.1": sorted(runs.glob("openai_gpt-realtime-2.1_*_ref")),
 }
 
 EQ = {"r": "ɹ", "ɚ": "ɹ", "ɝ": "ɹ", "y": "j", "ʧ": "tʃ", "ʤ": "dʒ"}  # build_metadata.py's strict spellings

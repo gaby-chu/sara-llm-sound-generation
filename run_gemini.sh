@@ -1,10 +1,10 @@
 #!/bin/bash
-# One voice: [RUN=v5] [PROMPTS=gen_prompts_v4.csv] bash run_v4.sh VOICE MODE [MODE ...]   MODE = text | ref | mimic
+# One voice: [RUN=final] [PROMPTS=gen_prompts_v4.csv] bash run_gemini.sh VOICE [MODE ...]   MODE = ref (default) | text | mimic
 # Optional ONLY="n_correct_01.wav l_correct_01.wav" limits the prompts.
 # Each mode: 3 takes -> runs/<RUN>_<VOICE>_<MODE>/, then triage and takes.csv.
 cd "$(dirname "$0")"
-RUN=${RUN:-v5}; PROMPTS=${PROMPTS:-gen_prompts_v4.csv}
-V=$1; shift
+RUN=${RUN:-final}; PROMPTS=${PROMPTS:-gen_prompts_v4.csv}
+V=$1; shift; [ $# -eq 0 ] && set -- ref
 for mode in "$@"; do
   OUT=runs/${RUN}_${V}_${mode}
   REF=(); [ $mode != text ] && REF=(--ref-dir sound_inputs --ref-mode $mode)
