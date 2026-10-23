@@ -36,8 +36,6 @@ Every clip is made from a reference recording (`sound_inputs/<sound>.wav`) plus 
    (Gemini only). `python build_scores.py`: copies every clip into `runs/gemini-3.8-live/` and
    `runs/gpt-realtime-2.1/` as `<VOICE>_ref_<clip>.wav`, with per-model score tables and `runs/combined_scores.csv`.
 
-Both generators still accept `text` and `mimic` modes (`bash run_gemini.sh VOICE text`), which aren't used now.
-
 ## Inputs and results
 
 - `gen_prompts_v4.csv`, `labels_v2.csv`: prompts and labels for the 23 correct sounds.

@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 """Generate sound clips from an OpenAI audio-output model (Chat Completions or Realtime), then run them through tools.py prep.
 
-Same prompts, reference recordings, take naming and transcripts.log as gen_gemini.py (OPENING, REF_INTRO, MIMIC,
-load_ref, crop_to_onset are imported from it), so triage_takes.py and takes_csv.py work on the output unchanged.
+Same prompts, reference recordings, take naming and transcripts.log as gen_gemini.py (OPENING, REF_INTRO, load_ref,
+crop_to_onset are imported from it), so triage_takes.py and takes_csv.py work on the output unchanged.
 
 gpt-audio-1.5 (alloy, 2026-10-20) returned near-silent takes for about half the prompts (raw peak under 0.05, vs about
 0.45 for Gemini). tools.py prep normalises them to 0.8 peak, which turns the model's noise floor into static. So takes
 whose raw peak is under --min-peak are kept in raw/ but not prepped, and logged as TOO QUIET.
 
---realtime uses the Realtime API (WebSocket) for gpt-realtime* models, like --live in gen_gemini.py.
+--realtime uses the Realtime API (WebSocket) for gpt-realtime* models, as gen_gemini.py uses the Live API.
 
 Setup (once):
   uv pip install --python .venv/bin/python openai
   put OPENAI_API_KEY=sk-... in .env (gitignored), or export it
 
 Run:
-  python gen_openai.py --only r_correct_01.wav
-  python gen_openai.py --voice coral --takes 3 --ref-dir sound_inputs --ref-mode ref --out runs/openai_coral_ref
   python gen_openai.py --model gpt-realtime-2.1 --realtime --only f_correct_01.wav
+  python gen_openai.py --model gpt-realtime-2.1 --realtime --voice coral --takes 3 --out runs/openai_gpt-realtime-2.1_coral_ref
 
-The opening goes in as the system message and the sound prompt (or reference recording + text) as the user turn,
-like the Live API path in gen_gemini.py. Voices: alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer,
+The opening goes in as the system message and the reference recording + REF_INTRO + the row's prompt as the user
+turn, like gen_gemini.py. Voices: alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer,
 verse, marin, cedar (the model rejects ones it does not support).
 """
 
@@ -60,13 +59,11 @@ def pcm_to_wav_bytes(pcm: bytes, rate: int) -> bytes:
     return buf.getvalue()
 
 
-def generate(client, model: str, voice: str, prompt: str, ref: tuple[bytes, str] | None = None) -> tuple[bytes, int, str]:
-    """With ref (pcm, text from load_ref), the user turn is the recording followed by that text, which replaces prompt."""
-    content = [{"type": "text", "text": prompt}]
-    if ref:
-        pcm_ref, text = ref
-        wav_b64 = base64.b64encode(pcm_to_wav_bytes(pcm_ref, 16000)).decode()
-        content = [{"type": "input_audio", "input_audio": {"data": wav_b64, "format": "wav"}}, {"type": "text", "text": text}]
+def generate(client, model: str, voice: str, ref: tuple[bytes, str]) -> tuple[bytes, int, str]:
+    """Chat Completions: the user turn is the reference recording followed by its text (pcm, text from load_ref)."""
+    pcm_ref, text = ref
+    wav_b64 = base64.b64encode(pcm_to_wav_bytes(pcm_ref, 16000)).decode()
+    content = [{"type": "input_audio", "input_audio": {"data": wav_b64, "format": "wav"}}, {"type": "text", "text": text}]
     resp = client.chat.completions.create(
         model=model,
         modalities=["text", "audio"],
@@ -81,20 +78,17 @@ def generate(client, model: str, voice: str, prompt: str, ref: tuple[bytes, str]
         return f.readframes(f.getnframes()), f.getframerate(), audio.transcript or ""
 
 
-def generate_realtime(client, model: str, voice: str, prompt: str, ref: tuple[bytes, str] | None = None) -> tuple[bytes, int, str]:
-    """Realtime API: the opening goes in as the session instructions, the sound prompt as one user item.
-
-    With ref (pcm, text from load_ref), the item is the recording followed by that text, which replaces prompt.
-    Realtime audio in and out is 24 kHz 16-bit mono PCM, so the 16 kHz reference is resampled first.
+def generate_realtime(client, model: str, voice: str, ref: tuple[bytes, str]) -> tuple[bytes, int, str]:
+    """Realtime API: the opening goes in as the session instructions, and one user item holds the reference recording
+    followed by its text (pcm, text from load_ref). Realtime audio in and out is 24 kHz 16-bit mono PCM, so the
+    16 kHz reference is resampled first.
     """
-    content = [{"type": "input_text", "text": prompt}]
-    if ref:
-        pcm_ref, text = ref
-        pcm24 = subprocess.run(
-            ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "-", "-ar", "24000", "-f", "s16le", "-"],
-            input=pcm_ref, capture_output=True, check=True,
-        ).stdout
-        content = [{"type": "input_audio", "audio": base64.b64encode(pcm24).decode()}, {"type": "input_text", "text": text}]
+    pcm_ref, text = ref
+    pcm24 = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "-", "-ar", "24000", "-f", "s16le", "-"],
+        input=pcm_ref, capture_output=True, check=True,
+    ).stdout
+    content = [{"type": "input_audio", "audio": base64.b64encode(pcm24).decode()}, {"type": "input_text", "text": text}]
     import ssl, certifi  # the WebSocket uses Python's own SSL, which has no CA certs on this Mac
 
     chunks, said = [], ""
@@ -136,9 +130,7 @@ def main() -> None:
     ap.add_argument("--skip-done", action="store_true", help="skip rows whose clips/<stem>.wav already exists")
     ap.add_argument("--takes", type=int, default=1)
     ap.add_argument("--take", type=int, help="make only this take number (to refill a failed take without redoing the others)")
-    ap.add_argument("--ref-dir", help="folder of reference recordings <target>.wav sent with each prompt")
-    ap.add_argument("--ref-mode", choices=["ref", "mimic"], default="ref",
-                    help="ref: recording + REF_INTRO + prompt; mimic: recording + MIMIC only")
+    ap.add_argument("--ref-dir", default="sound_inputs", help="folder of reference recordings <target>.wav sent with each prompt")
     ap.add_argument("--out", help="folder for raw/ and clips/ (default: next to this script)")
     args = ap.parse_args()
 
@@ -151,8 +143,6 @@ def main() -> None:
 
     with open(repo / args.prompts, newline="", encoding="utf-8") as f:
         rows = [r for r in csv.DictReader(f) if not args.only or r["file"] == args.only]
-    if args.ref_mode == "mimic":  # the recordings are all correct sounds, so mimicking one can't make an error
-        rows = [r for r in rows if "_correct_" in r["file"]]
     if not rows:
         sys.exit("no matching rows in the prompts csv")
 
@@ -160,14 +150,15 @@ def main() -> None:
         stem = Path(row["file"]).stem
         if args.skip_done and (here / "clips" / f"{stem}.wav").exists():
             continue
+        ref = load_ref(Path(args.ref_dir), row)
+        if not ref:
+            print(f"FAILED {stem}: no reference recording in {args.ref_dir}", file=sys.stderr)
+            continue
         for take in [args.take] if args.take else range(1, args.takes + 1):
             raw = here / "raw" / f"{stem}_take{take}.wav"
             try:
-                ref = load_ref(Path(args.ref_dir), row, args.ref_mode) if args.ref_dir else None
-                if args.ref_dir and not ref:
-                    print(f"  no reference recording for {stem}, sending text only", file=sys.stderr)
                 gen = generate_realtime if args.realtime else generate
-                pcm, rate, text = gen(client, args.model, args.voice, row["prompt"], ref)
+                pcm, rate, text = gen(client, args.model, args.voice, ref)
             except Exception as e:  # keep going: failures are results for the memo
                 print(f"FAILED {stem} take{take}: {e}", file=sys.stderr)
                 continue

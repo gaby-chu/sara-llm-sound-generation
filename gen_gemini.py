@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Generate sound clips from a Gemini audio-output model on Vertex AI, then run them through tools.py prep.
+"""Generate sound clips from a Gemini native-audio model on Vertex AI (Live API), then run them through tools.py prep.
 
-UNTESTED against a live project: written from the google-genai SDK pattern, no credentials were available
-when this was written. Run one prompt first (--only) and listen before running the batch.
+Each prompt is sent as the reference recording for its sound (--ref-dir, sound_inputs/<ref>.wav) followed by
+REF_INTRO and the row's prompt from the prompts csv.
 
 Setup (once):
   pip install google-genai numpy
@@ -10,13 +10,8 @@ Setup (once):
   # use the Columbia GCP project that holds your credits
 
 Run:
-  python gen_gemini.py --project YOUR_PROJECT --model MODEL_NAME --only r_correct_01.wav
-  python gen_gemini.py --project YOUR_PROJECT --model MODEL_NAME          # all rows in gen_prompts_v4.csv
-  Native-audio models (gemini-live-2.5-flash-native-audio) need --live; TTS models use generate_content.
-
-MODEL_NAME: copy the exact audio-output model id from Vertex AI Model Garden. Pick a model that follows
-instructions and returns audio (native audio / live style). A pure text-to-speech model will read the
-prompt text aloud word for word instead of making the sound; you will hear that on the first clip.
+  python gen_gemini.py --project YOUR_PROJECT --model gemini-3.8-live --only r_correct_01.wav
+  python gen_gemini.py --project YOUR_PROJECT --model gemini-3.8-live          # all rows in gen_prompts_v4.csv
 
 Raw takes go to raw/, prepped 16 kHz mono clips go to clips/, and the take number is added to the name so
 repeat runs do not overwrite earlier ones. takes_csv.py logs the model, voice and prompt of every take.
@@ -26,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import re
 import subprocess
 import sys
 import wave
@@ -46,22 +40,17 @@ OPENING = (
 # or, without that column, the file-name prefix (r_, s_, b_, g_)
 REF_IPA = {"r": "ɹ", "s": "s", "b": "b", "g": "ɡ"}
 
-# --ref-mode ref: the recording, then REF_INTRO, then the row's prompt. The voice comes from --voice, so the
-# recording is only a reference for which sound to make, not for voice or recording quality.
+# The recording, then REF_INTRO, then the row's prompt. The voice comes from --voice, so the recording is only a
+# reference for which sound to make, not for voice or recording quality.
 REF_INTRO = (
     "The audio is a recording of a person making the correct {name} sound, IPA {ipa}. Use it only as a reference "
     "for which sound to make. Use your own voice, and make the sound as clean and natural as possible. Don't copy "
     "the recording's voice, recording quality, length, background noise, or any vowel before or after the sound. "
     "Then do the following."
 )
-# --ref-mode mimic: the recording, then only this (no row prompt)
-MIMIC = (
-    "Repeat exactly the sound in this recording, in your own voice, as clean and natural as possible. "
-    "Don't copy the recording quality. Only the sound."
-)
 
 
-def load_ref(ref_dir: Path, row: dict, mode: str = "ref") -> tuple[bytes, str] | None:
+def load_ref(ref_dir: Path, row: dict) -> tuple[bytes, str] | None:
     """Reference recording for this prompt's target sound as 16 kHz mono PCM (the Live API rejects audio/wav parts),
     and the text sent after it (the whole user message)."""
     target = row.get("ref") or row["file"].split("_", 1)[0]
@@ -73,8 +62,6 @@ def load_ref(ref_dir: Path, row: dict, mode: str = "ref") -> tuple[bytes, str] |
         ["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", "16000", "-f", "s16le", "-"],
         capture_output=True, check=True,
     ).stdout
-    if mode == "mimic":
-        return pcm, MIMIC
     intro = REF_INTRO.format(name=target.replace("_", " ").upper(), ipa=ipa)
     return pcm, f"{intro}\n\n{row['prompt']}"
 
@@ -104,32 +91,13 @@ def crop_to_onset(pcm: bytes, rate: int, keep_s: float = 1.8) -> bytes:
     return y.astype(np.int16).tobytes()
 
 
-def generate(client, types, model: str, voice: str, prompt: str) -> tuple[bytes, int, str]:
-    config = types.GenerateContentConfig(
-        response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice))
-        ),
-    )
-    resp = client.models.generate_content(model=model, contents=f"{OPENING}\n\n{prompt}", config=config)
-    part = resp.candidates[0].content.parts[0]
-    mime = part.inline_data.mime_type or ""
-    m = re.search(r"rate=(\d+)", mime)
-    rate = int(m.group(1)) if m else 24000  # PCM 16-bit mono is the documented default for Gemini audio output
-    return part.inline_data.data, rate, ""
-
-
-def generate_live(client, types, model: str, voice: str, prompt: str, ref: tuple[bytes, str] | None = None) -> tuple[bytes, int, str]:
-    """Live API (native audio models): the opening goes in as the system instruction, the sound prompt as the turn.
-
-    With ref (pcm, text from load_ref), the turn is the recording followed by that text, which replaces prompt.
-    """
+def generate_live(client, types, model: str, voice: str, ref: tuple[bytes, str]) -> tuple[bytes, int, str]:
+    """Live API (native audio models): the opening goes in as the system instruction, and the turn is the reference
+    recording followed by its text (pcm, text from load_ref)."""
     import asyncio
 
-    parts = [types.Part(text=prompt)]
-    if ref:
-        pcm_ref, text = ref
-        parts = [types.Part.from_bytes(data=pcm_ref, mime_type="audio/pcm;rate=16000"), types.Part(text=text)]
+    pcm_ref, text = ref
+    parts = [types.Part.from_bytes(data=pcm_ref, mime_type="audio/pcm;rate=16000"), types.Part(text=text)]
 
     async def run() -> tuple[bytes, str]:
         config = types.LiveConnectConfig(
@@ -169,17 +137,12 @@ def main() -> None:
     ap.add_argument("--voice", default="Kore", help="prebuilt voice name; try a few and log which")
     ap.add_argument("--prompts", default="gen_prompts_v4.csv")
     ap.add_argument("--only", help="generate just this file name from the prompts csv")
-    ap.add_argument("--live", action="store_true", help="use the Live API (needed for native-audio models)")
     ap.add_argument("--skip-done", action="store_true", help="skip rows whose clips/<stem>.wav already exists")
     ap.add_argument("--takes", type=int, default=1)
     ap.add_argument("--take", type=int, help="make only this take number (to refill a failed take without redoing the others)")
-    ap.add_argument("--ref-dir", help="folder of reference recordings <target>.wav sent with each prompt (needs --live)")
-    ap.add_argument("--ref-mode", choices=["ref", "mimic"], default="ref",
-                    help="ref: recording + REF_INTRO + prompt; mimic: recording + MIMIC only")
+    ap.add_argument("--ref-dir", default="sound_inputs", help="folder of reference recordings <target>.wav sent with each prompt")
     ap.add_argument("--out", help="folder for raw/ and clips/ (default: next to this script)")
     args = ap.parse_args()
-    if args.ref_dir and not args.live:
-        sys.exit("--ref-dir needs --live: TTS models do not take audio input")
 
     from google import genai
     from google.genai import types
@@ -190,8 +153,6 @@ def main() -> None:
 
     with open(repo / args.prompts, newline="", encoding="utf-8") as f:
         rows = [r for r in csv.DictReader(f) if not args.only or r["file"] == args.only]
-    if args.ref_mode == "mimic":  # the recordings are all correct sounds, so mimicking one can't make an error
-        rows = [r for r in rows if "_correct_" in r["file"]]
     if not rows:
         sys.exit("no matching rows in the prompts csv")
 
@@ -199,16 +160,14 @@ def main() -> None:
         stem = Path(row["file"]).stem
         if args.skip_done and (here / "clips" / f"{stem}.wav").exists():
             continue
+        ref = load_ref(Path(args.ref_dir), row)
+        if not ref:
+            print(f"FAILED {stem}: no reference recording in {args.ref_dir}", file=sys.stderr)
+            continue
         for take in [args.take] if args.take else range(1, args.takes + 1):
             raw = here / "raw" / f"{stem}_take{take}.wav"
             try:
-                if args.live:
-                    ref = load_ref(Path(args.ref_dir), row, args.ref_mode) if args.ref_dir else None
-                    if args.ref_dir and not ref:
-                        print(f"  no reference recording for {stem}, sending text only", file=sys.stderr)
-                    pcm, rate, text = generate_live(client, types, args.model, args.voice, row["prompt"], ref)
-                else:
-                    pcm, rate, text = generate(client, types, args.model, args.voice, row["prompt"])
+                pcm, rate, text = generate_live(client, types, args.model, args.voice, ref)
             except Exception as e:  # keep going: failures are results for the memo
                 print(f"FAILED {stem} take{take}: {e}", file=sys.stderr)
                 continue

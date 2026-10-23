@@ -23,8 +23,7 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 ap.add_argument("run")
 ap.add_argument("--prompts", default="gen_prompts_v4.csv")
 ap.add_argument("--labels", default="labels_v2.csv")
-ap.add_argument("--ref-dir")
-ap.add_argument("--ref-mode", choices=["ref", "mimic"], default="ref")
+ap.add_argument("--ref-dir", default="sound_inputs")
 args = ap.parse_args()
 
 here = Path(__file__).parent
@@ -42,7 +41,7 @@ for line in open(root / "raw" / "transcripts.log", encoding="utf-8"):
 for stem, take, model, voice, secs, said in latest.values():
     name = f"{stem}_{take}.wav"
     p, lab, t = prompts.get(stem, {}), labels.get(stem, {}), tri.get(name, {})
-    ref = g.load_ref(Path(args.ref_dir), p, args.ref_mode) if args.ref_dir and p else None
+    ref = g.load_ref(Path(args.ref_dir), p) if p else None
     ref_file = Path(args.ref_dir) / f"{p.get('ref') or stem.split('_', 1)[0]}.wav" if ref else ""
     want = lab.get("produced_IPA", "")
     clean = bool(t) and bool(want) and norm(t.get("heard_ipa")) == norm(want) and not t.get("vowel_after") and not t.get("letter_name_or_word")
@@ -50,7 +49,7 @@ for stem, take, model, voice, secs, said in latest.values():
         "clip": f"clips/{name}" if (root / "clips" / name).exists() else "",
         "prompt_id": stem, "take": take[4:], "model": model, "voice": voice,
         "target_sound": lab.get("target_sound", ""), "intended_ipa": want, "error_type": lab.get("error_type", ""),
-        "system_instruction": g.OPENING, "mode": args.ref_mode if ref else "text", "reference_audio": str(ref_file),
+        "system_instruction": g.OPENING, "mode": "ref", "reference_audio": str(ref_file),
         "user_prompt": ref[1] if ref else p.get("prompt", ""),
         "raw_seconds": secs[:-1], "cropped_to_1.8s": float(secs[:-1]) > 3.0,
         "model_transcript": "" if said == "NO AUDIO" else said.removeprefix("TOO QUIET ").strip("'"),
