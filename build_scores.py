@@ -9,9 +9,8 @@ Copies every clip to runs/<model>/<VOICE>_<MODE>_<clip>.wav (the source runs are
 runs/<model>/<model>_scores.csv per model and runs/combined_scores.csv with both.
 
 Columns as in runs_archive/scorer_report_clips.csv (see scorer_report.md for the rules), plus model and source_clip:
-- gemini / zipa / w2v2: what each scorer heard (Gemini 2.5 Flash listener from takes.csv, ZIPA and wav2vec2 from
-  scores_local.json).
-- <scorer>_strict: the whole output is the intended IPA (Gemini: also no vowel after, no letter name or word).
+- zipa / w2v2: what each scorer heard (from scores_local.json).
+- <scorer>_strict: the whole output is the intended IPA.
 - <scorer>_cons: the consonants are the intended ones, after dropping vowels and glottal stops and collapsing repeats
   (so 'bə' counts as /b/, 'p a' does not).
 """
@@ -58,10 +57,6 @@ def cons(heard: str, want: str) -> bool:
     return bool(consonants(heard)) and consonants(heard) == consonants(want)
 
 
-def truthy(v) -> bool:
-    return str(v).strip().lower() in ("true", "1", "yes")
-
-
 def error_type(lab: dict) -> str:
     e = lab.get("error_type", "")
     return "distortion" if "distortion" in e else e
@@ -86,16 +81,13 @@ for model, dirs in SOURCES.items():
             shutil.copy2(src, out)
             before.discard(out)
             s = local.get(src.name, {})
-            g, z, w = r["listener_heard_ipa"], s.get("zipa", "").replace("▁", "").strip(), s.get("w2v2", "")
-            vowel, letter = truthy(r["listener_vowel_after"]), truthy(r["listener_letter_or_word"])
+            z, w = s.get("zipa", "").replace("▁", "").strip(), s.get("w2v2", "")
             rows.append({
                 "file": str(out.relative_to(repo)), "model": model, "sound": r["prompt_id"].replace("_correct_01", ""),
                 "error_type": error_type(lab), "voice": voice, "mode": mode, "want": want,
-                "gemini": g, "zipa": z, "w2v2": w,
-                "gemini_vowel_after": vowel, "gemini_letter_or_word": letter,
-                "gemini_strict": strict(g, want) and not vowel and not letter,
+                "zipa": z, "w2v2": w,
                 "zipa_strict": strict(z, want), "w2v2_strict": strict(w, want),
-                "gemini_cons": cons(g, want), "zipa_cons": cons(z, want), "w2v2_cons": cons(w, want),
+                "zipa_cons": cons(z, want), "w2v2_cons": cons(w, want),
                 "source_clip": str(src.relative_to(repo)),
             })
     for stale in before:  # clips no longer in any source run
@@ -106,7 +98,7 @@ for model, dirs in SOURCES.items():
     n = len(rows)
     rate = lambda k: f"{sum(r[k] for r in rows) / n:.0%}"
     print(f"runs/{model}/: {n} clips from {len(dirs)} runs; strict / consonant match: "
-          + ", ".join(f"{s} {rate(s + '_strict')} / {rate(s + '_cons')}" for s in ("gemini", "zipa", "w2v2")))
+          + ", ".join(f"{s} {rate(s + '_strict')} / {rate(s + '_cons')}" for s in ("zipa", "w2v2")))
 
 with open(runs / "combined_scores.csv", "w", newline="", encoding="utf-8") as f:
     wr = csv.DictWriter(f, fieldnames=list(all_rows[0])); wr.writeheader(); wr.writerows(all_rows)

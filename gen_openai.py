@@ -2,7 +2,7 @@
 """Generate sound clips from an OpenAI audio-output model (Chat Completions or Realtime), then run them through tools.py prep.
 
 Same prompts, reference recordings, take naming and transcripts.log as gen_gemini.py (OPENING, REF_INTRO, load_ref,
-crop_to_onset are imported from it), so triage_takes.py and takes_csv.py work on the output unchanged.
+crop_to_onset are imported from it), so takes_csv.py works on the output unchanged.
 
 gpt-audio-1.5 (alloy, 2026-10-20) returned near-silent takes for about half the prompts (raw peak under 0.05, vs about
 0.45 for Gemini). tools.py prep normalises them to 0.8 peak, which turns the model's noise floor into static. So takes
