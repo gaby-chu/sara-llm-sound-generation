@@ -1,9 +1,7 @@
 # Gemini native-audio sound generation
 
-Generates isolated speech sounds with Gemini's live native-audio model on Vertex AI (and OpenAI's realtime model),
-scores them locally with ZIPA and wav2vec2, and builds per-clip metadata. Split out of
-[mihir-agarwal0211/sara-multimodal-llm-sounds](https://github.com/mihir-agarwal0211/sara-multimodal-llm-sounds),
-keeping only the current pipeline (the first pilot's `finalize.py`, `triage.py`, `triage_rw.py` and their data were left behind).
+Generates isolated speech sounds with Gemini's live native-audio model on Vertex AI and OpenAI's realtime model,
+scores them locally with ZIPA and wav2vec2, and builds per-clip metadata. 
 
 ## Setup
 
