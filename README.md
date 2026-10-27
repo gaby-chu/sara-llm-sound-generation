@@ -1,7 +1,8 @@
 # Gemini native-audio sound generation
 
 Generates isolated speech sounds with Gemini's live native-audio model on Vertex AI and OpenAI's realtime model,
-scores them locally with ZIPA and wav2vec2, and builds per-clip metadata. 
+scores them locally with ZIPA and two wav2vec2 phone recognizers, and builds per-clip metadata and the dataset.
+The dataset format every method should follow is in `SCHEMA.md`.
 
 ## Setup
 
@@ -27,17 +28,31 @@ Every clip is made from a reference recording (`sound_inputs/<sound>.wav`) plus 
    model accepts: alloy, ash, ballad, cedar, coral, echo, marin, sage, shimmer, verse. Takes with a raw peak under 0.05 are kept in `raw/` but not
    prepped. Quiet f/θ often fall under that, so coral f and sage θ (no take above it in 8 retries) use a take
    prepped by hand: take 2, a real fricative 24–31 dB above the noise floor.
-3. `python score_local.py runs/final_*_ref runs/openai_*_ref`: ZIPA and wav2vec2 transcriptions, `scores_local.json`
-   per folder.
+3. `python score_local.py runs/final_*_ref runs/openai_*_ref`: ZIPA, wav2vec2 (TIMIT) and wav2vec2 (espeak IPA)
+   transcriptions, `scores_local.json` per folder. Works on any folder of 16 kHz WAVs, so other methods can run the
+   same evaluation on their clips (see Evaluating your own clips).
 4. `python build_metadata.py`: `runs/final_metadata.csv`, `runs/final_generation.csv`, `runs/scorer_comparison.md`
    (Gemini only). `python build_scores.py`: copies every clip into `runs/gemini-3.8-live/` and
    `runs/gpt-realtime-2.1/` as `<VOICE>_ref_<clip>.wav`, with per-model score tables and `runs/combined_scores.csv`.
 5. `python build_dataset.py`: the final dataset, `runs/dataset/<model>/` with every take that has audio as
-   `<id>.wav` and `<model>.csv` (id, target_sound, intended_ipa, error_type, voice).
+   `<id>.wav` and `<model>.csv` in the `SCHEMA.md` format. Each correct take also gets a row for every substitution
+   it stands for (`error_types.csv`), reusing the same audio, so the set covers the app's substitutions too.
+
+## Evaluating your own clips
+
+```bash
+python score_local.py path/to/your_clips      # a folder of 16 kHz mono WAVs; writes scores_local.json next to them
+```
+
+Each clip gets what ZIPA, wav2vec2 TIMIT and wav2vec2 espeak heard. Put these in the `*_ipa` columns of your
+CSV. No scorer is reliable on isolated sounds yet (`scorer_report.md`): use them to pick clips for listening.
 
 ## Inputs and results
 
 - `gen_prompts_v4.csv`, `labels_v2.csv`: prompts and labels for the 23 correct sounds.
+- `error_types.csv`: the 66 substitutions in Sara's `phoneme-endpoint` `error_type.py` (target sound, error type,
+  sound produced instead). Omissions and `other_substitution` are out of scope.
+- `SCHEMA.md`: the dataset format for every method.
 - `sound_inputs/`: the 23 reference recordings sent with each prompt.
 - `scorer_report.md`: Gemini listener vs ZIPA vs wav2vec2 (written for the earlier text + ref runs; the Gemini
   listener, `triage_takes.py`, has since been removed).

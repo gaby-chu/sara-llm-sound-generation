@@ -12,7 +12,7 @@ Writes, in runs/:
   as no match).
 - final_generation.csv: how each take was made (prompt file, system instruction, reference audio, prompt sent,
   raw file, length, crop, model transcript), including takes that came back with no audio. Joins on file.
-- scorer_comparison.md: match rates, agreement and per-sound results for ZIPA vs wav2vec2.
+- scorer_comparison.md: match rates, agreement and per-sound results for ZIPA vs both wav2vec2 models.
 """
 import csv, json, re
 from collections import Counter, defaultdict
@@ -62,13 +62,14 @@ for d in sorted(runs.glob("final_*_ref")):
         if not file:
             continue
         z = local.get(name, {})
-        z_ipa, w_ipa = z.get("zipa", "").replace("▁", "").strip(), z.get("w2v2", "")
+        z_ipa, w_ipa, e_ipa = z.get("zipa", "").replace("▁", "").strip(), z.get("w2v2", ""), z.get("w2v2_espeak", "")
         meta.append({
             "file": file, "target_sound": lab.get("target_sound", r["target_sound"]), "produced_IPA": want,
             "error_type": error_type(lab), "method": f"{r['model']} text prompt + reference recording",
             "voice": voice, "source_clip": r["reference_audio"],
             "zipa_ipa": z_ipa, "zipa_match": bool(z) and norm(z_ipa) == norm(want),
             "w2v2_ipa": w_ipa, "w2v2_match": bool(z) and norm(w_ipa) == norm(want),
+            "w2v2_espeak_ipa": e_ipa, "w2v2_espeak_match": bool(e_ipa) and norm(e_ipa) == norm(want),
             "human_review": "",
         })
 
@@ -79,11 +80,14 @@ for name, rows in [("final_metadata.csv", meta), ("final_generation.csv", gen)]:
 
 
 # ---- scorer comparison ----
-S = [("zipa", "ZIPA large CR-CTC"), ("w2v2", "wav2vec2 TIMIT phoneme")]
+S = [("zipa", "ZIPA large CR-CTC"), ("w2v2", "wav2vec2 TIMIT phoneme"), ("w2v2_espeak", "wav2vec2 espeak IPA")]
 
 
 def contains(heard: str, want: str) -> bool:
-    return bool(norm(want)) and norm(want) in norm(heard)
+    """The intended sound appears in what the model heard. Affricates count as one sound, so ʃ inside tʃ or z inside
+    dʒ is not a match (as a plain substring it would be)."""
+    one = lambda x: norm(x).replace("tʃ", "C").replace("dʒ", "J")
+    return bool(norm(want)) and one(want) in one(heard)
 
 
 def kappa(a, b) -> float:
@@ -95,7 +99,7 @@ def kappa(a, b) -> float:
 
 scored = [m for m in meta if m["zipa_ipa"] or m["w2v2_ipa"] or m["file"]]
 correct = [m for m in scored if m["error_type"] == "correct"]
-lines = ["# Scorer comparison: ZIPA vs wav2vec2", "",
+lines = ["# Scorer comparison: ZIPA vs wav2vec2 (TIMIT) vs wav2vec2 (espeak)", "",
          f"{len(scored)} generated clips in runs/final_*_ref, all intended-correct sounds. No human labels yet, so these are agreement numbers, not accuracy.",
          "", "Match = the scorer heard exactly the intended IPA. "
          "Contains = the intended sound appears somewhere in what the local model heard (it may have added a vowel).", ""]
@@ -106,12 +110,12 @@ if human.exists():
     lines += ["## Baseline: your 23 reference recordings (known correct)", "",
               "| Scorer | Match | Contains |", "|---|---|---|"]
     for k, title in S:
-        m = sum(norm(v[k]) == norm(v["want"]) for v in h.values())
-        c = sum(contains(v[k], v["want"]) for v in h.values())
+        m = sum(norm(v.get(k, "")) == norm(v["want"]) for v in h.values() if k in v)
+        c = sum(contains(v.get(k, ""), v["want"]) for v in h.values() if k in v)
         lines.append(f"| {title} | {m}/{len(h)} | {c}/{len(h)} |")
-    lines += ["", "| Sound | Intended | ZIPA | wav2vec2 |", "|---|---|---|---|"]
+    lines += ["", "| Sound | Intended | ZIPA | wav2vec2 | wav2vec2 espeak |", "|---|---|---|---|---|"]
     for s, v in sorted(h.items()):
-        lines.append(f"| {s} | {v['want']} | {v['zipa'].replace('▁', '').strip()} | {v['w2v2']} |")
+        lines.append(f"| {s} | {v['want']} | {v['zipa'].replace('▁', '').strip()} | {v['w2v2']} | {v.get('w2v2_espeak', '')} |")
     lines.append("")
 
 lines += ["## Generated clips: match rates (intended-correct sounds)", "",
@@ -132,8 +136,8 @@ for i in range(len(S)):
                      f"{sum(y and not x for x, y in zip(a, b))} |")
 
 lines += ["", "## Per sound: clips matched (of all voices) and what each scorer heard most", "",
-          "| Sound | IPA | n | ZIPA | wav2vec2 | ZIPA heard | wav2vec2 heard |",
-          "|---|---|---|---|---|---|---|"]
+          "| Sound | IPA | n | ZIPA | wav2vec2 | wav2vec2 espeak | ZIPA heard | wav2vec2 heard | espeak heard |",
+          "|---|---|---|---|---|---|---|---|---|"]
 by = defaultdict(list)
 for r in scored:
     by[r["file"].split("/")[-1].rsplit("_take", 1)[0]].append(r)
@@ -141,9 +145,9 @@ for s, rs in sorted(by.items()):
     top = lambda k: ", ".join(f"{x or '–'} ×{n}" for x, n in Counter(r[f"{k}_ipa"] for r in rs).most_common(2))
     lines.append(f"| {s.replace('_correct_01', '')} | {rs[0]['produced_IPA']} | {len(rs)} | "
                  + " | ".join(str(sum(r[f'{k}_match'] for r in rs)) for k, _ in S)
-                 + f" | {top('zipa')} | {top('w2v2')} |")
+                 + f" | {top('zipa')} | {top('w2v2')} | {top('w2v2_espeak')} |")
 
-lines += ["", "## By voice (ZIPA / wav2vec2 matches)", "", "| Voice | Clips | Matches |", "|---|---|---|"]
+lines += ["", "## By voice (ZIPA / wav2vec2 / wav2vec2 espeak matches)", "", "| Voice | Clips | Matches |", "|---|---|---|"]
 for v in sorted({r["voice"] for r in correct}):
     rs = [r for r in correct if r["voice"] == v]
     lines.append(f"| {v} | {len(rs)} | {' / '.join(str(sum(r[f'{k}_match'] for r in rs)) for k, _ in S)} |")
