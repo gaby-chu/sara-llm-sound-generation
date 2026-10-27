@@ -3,13 +3,17 @@
 
   python score_local.py DIR [DIR ...]      # each DIR has clips/*.wav, or is a folder of .wav files
 
-Writes DIR/scores_local.json: {clip file name: {"zipa": "t ʃ", "w2v2": "tʃ"}}, space-separated phones as each model
-outputs them. Clips already scored are skipped. Matching against the intended sound happens in build_metadata.py.
+Writes DIR/scores_local.json: {clip file name: {"zipa": "t ʃ", "w2v2": "tʃ", "w2v2_espeak": "tʃ"}}, phones as each
+model outputs them. Clips already scored by every model are skipped, so adding a model only runs that model.
+Matching against the intended sound happens in build_metadata.py.
 
 Models (downloaded to ~/.cache/huggingface on first use):
 - ZIPA: anyspeech/zipa-large-crctc-500k, model.onnx (CC BY 4.0), 80-bin Kaldi fbank, greedy CTC; feature setup and
   decoding as in github.com/lingjzhu/zipa inference/utils.py.
 - wav2vec2: vitouphy/wav2vec2-xls-r-300m-timit-phoneme, the model behind Sara's phoneme-endpoint.
+- wav2vec2 espeak: facebook/wav2vec2-lv-60-espeak-cv-ft, a multilingual IPA phone recognizer trained on different data,
+  so it is a check that does not share the TIMIT model's blind spots. The tokenizer is loaded with
+  do_phonemize=False, so neither phonemizer nor espeak needs to be installed.
 Needs onnxruntime<=1.21 on macOS 13.2 (newer wheels are built for 13.4+).
 """
 import json, sys
@@ -21,6 +25,7 @@ import torch
 
 ZIPA_REPO = "anyspeech/zipa-large-crctc-500k"
 W2V2_REPO = "vitouphy/wav2vec2-xls-r-300m-timit-phoneme"
+ESPEAK_REPO = "facebook/wav2vec2-lv-60-espeak-cv-ft"
 
 
 def load_zipa():
@@ -59,17 +64,31 @@ def load_w2v2():
     return run
 
 
+def load_w2v2_espeak():
+    from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC, Wav2Vec2PhonemeCTCTokenizer
+    fe = Wav2Vec2FeatureExtractor.from_pretrained(ESPEAK_REPO)
+    tok = Wav2Vec2PhonemeCTCTokenizer.from_pretrained(ESPEAK_REPO, do_phonemize=False)
+    model = Wav2Vec2ForCTC.from_pretrained(ESPEAK_REPO).eval()
+
+    def run(audio: np.ndarray) -> str:
+        with torch.no_grad():
+            logits = model(fe(audio, sampling_rate=16000, return_tensors="pt").input_values).logits
+        return tok.batch_decode(logits.argmax(-1))[0].strip()
+    return run
+
+
 def main() -> None:
-    zipa, w2v2 = load_zipa(), load_w2v2()
+    models = {"zipa": load_zipa(), "w2v2": load_w2v2(), "w2v2_espeak": load_w2v2_espeak()}
     for d in map(Path, sys.argv[1:]):
         clips = d / "clips" if (d / "clips").is_dir() else d
         out = d / "scores_local.json"
         res = json.load(open(out, encoding="utf-8")) if out.exists() else {}
         for f in sorted(clips.glob("*.wav")):
-            if f.name in res:
+            todo = [k for k in models if k not in res.get(f.name, {})]
+            if not todo:
                 continue
             audio, _ = librosa.load(f, sr=16000, mono=True)
-            res[f.name] = {"zipa": zipa(audio), "w2v2": w2v2(audio)}
+            res.setdefault(f.name, {}).update({k: models[k](audio) for k in todo})
         json.dump(res, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         print(f"{out}: {len(res)} clips")
 
